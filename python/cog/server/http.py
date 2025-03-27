@@ -21,6 +21,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from contextlib import asynccontextmanager
 
 from .. import schema
 from ..config import Config
@@ -310,10 +311,11 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals,too-many-s
                 msg = "Error while loading trainer:\n\n" + traceback.format_exc()
                 add_setup_failed_routes(app, started_at, msg)
                 return app
-
-    @app.on_event("startup")
-    def startup() -> None:
-        # check for early setup failures
+    
+    
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup code (replaces the @app.on_event("startup") function)
         if (
             app.state.setup_result
             and app.state.setup_result.status == schema.Status.FAILED
@@ -324,10 +326,29 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals,too-many-s
         else:
             setup_task = runner.setup()
             setup_task.add_done_callback(_handle_setup_done)
-
-    @app.on_event("shutdown")
-    def shutdown() -> None:
+        
+        yield  # This is where FastAPI serves requests
+        
+        # Shutdown code (replaces the @app.on_event("shutdown") function)
         worker.terminate()
+    
+    # @app.on_event("startup")
+    # def startup() -> None:
+    #     # check for early setup failures
+    #     if (
+    #         app.state.setup_result
+    #         and app.state.setup_result.status == schema.Status.FAILED
+    #     ):
+    #         # signal shutdown if interactive run
+    #         if shutdown_event and not await_explicit_shutdown:
+    #             shutdown_event.set()
+    #     else:
+    #         setup_task = runner.setup()
+    #         setup_task.add_done_callback(_handle_setup_done)
+
+    # @app.on_event("shutdown")
+    # def shutdown() -> None:
+    #     worker.terminate()
 
     @app.get("/")
     async def root() -> Any:
@@ -655,6 +676,7 @@ if __name__ == "__main__":
         upload_url=args.upload_url,
         mode=args.mode,
         await_explicit_shutdown=await_explicit_shutdown,
+        lifespan=lifespan
     )
 
     host: str = args.host
